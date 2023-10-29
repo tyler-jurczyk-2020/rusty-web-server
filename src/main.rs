@@ -1,7 +1,13 @@
 use std::net::{TcpListener, TcpStream};
 use std::io::{BufReader, BufRead, Write};
 
+mod poller;
+
 fn main() {
+    poller::initialize_poll();
+
+
+    // Old code
     let tcp_listener = match TcpListener::bind("127.0.0.1:7878") {
         Ok(v) => v,
         Err(e) => panic!("Unable to setup listener: {}", e)
