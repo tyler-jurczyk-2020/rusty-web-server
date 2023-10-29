@@ -1,5 +1,5 @@
 use std::net::{TcpListener, TcpStream};
-use std::io::{BufReader, BufRead};
+use std::io::{BufReader, BufRead, Write};
 
 fn main() {
     let tcp_listener = match TcpListener::bind("127.0.0.1:7878") {
@@ -17,8 +17,8 @@ fn main() {
     }
 }
 
-fn process_stream(stream : TcpStream) {
-    let mut buf_reader = BufReader::new(stream);
+fn process_stream(mut stream : TcpStream) {
+    let buf_reader = BufReader::new(&stream);
     let http_request : Vec<_> = buf_reader
         .lines()
         .map(|res| res.unwrap())
@@ -27,4 +27,11 @@ fn process_stream(stream : TcpStream) {
     for string in http_request {
         println!("{}", string);
     }
+    let greeting = "Hello from the rusty web server!";
+    let greeting_len = greeting.len();
+    stream.write_all(format!("{}Content-Length: {greeting_len}\r\n\r\n{greeting}", generate_response()).as_bytes()).unwrap();
+}
+
+fn generate_response() -> &'static str {
+    "HTTP/1.1 200 OK\r\n"
 }
