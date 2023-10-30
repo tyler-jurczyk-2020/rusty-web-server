@@ -4,8 +4,10 @@ use std::io::{BufReader, BufRead, Write};
 mod poller;
 
 fn main() {
-    poller::initialize_poll();
-
+    let mut handler = poller::initialize_poll().unwrap();
+    loop {
+        handler.poll_events();
+    }
 
     // Old code
     let tcp_listener = match TcpListener::bind("127.0.0.1:7878") {
