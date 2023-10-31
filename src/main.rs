@@ -7,22 +7,32 @@ fn main() {
     let mut handler = poller::initialize_poll().unwrap();
     loop {
         handler.poll_events();
+        for event in handler.events.iter() {
+            match event.token() {
+                mio::Token(0) => {
+                    println!("Client attempting to connect to the server!");
+                    let connection = handler.server.accept();
+                    drop(connection);
+                },
+                _ => panic!("Uh Oh...")
+            }
+        }
     }
 
     // Old code
-    let tcp_listener = match TcpListener::bind("127.0.0.1:7878") {
-        Ok(v) => v,
-        Err(e) => panic!("Unable to setup listener: {}", e)
-    }; 
+    //let tcp_listener = match TcpListener::bind("127.0.0.1:7878") {
+    //    Ok(v) => v,
+    //    Err(e) => panic!("Unable to setup listener: {}", e)
+    //}; 
 
-    for stream in tcp_listener.incoming() {
-        println!("Processing Connection");
-        match stream {
-            Ok(v) => process_stream(v),
-            Err(e) => panic!("Unable to aquire stream: {}", e)
-        };
-        println!("Processed Connection!");
-    }
+    //for stream in tcp_listener.incoming() {
+    //    println!("Processing Connection");
+    //    match stream {
+    //        Ok(v) => process_stream(v),
+    //        Err(e) => panic!("Unable to aquire stream: {}", e)
+    //    };
+    //    println!("Processed Connection!");
+    //}
 }
 
 fn process_stream(mut stream : TcpStream) {
