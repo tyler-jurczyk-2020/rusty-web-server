@@ -1,5 +1,6 @@
 use std::net::{TcpListener, TcpStream};
-use std::io::{BufReader, BufRead, Write};
+use std::io::{BufReader, BufRead, Write, Read};
+use std::time::Duration;
 
 mod poller;
 
@@ -11,9 +12,32 @@ fn main() {
             match event.token() {
                 mio::Token(0) => {
                     println!("Client attempting to connect to the server!");
-                    let connection = handler.server.accept();
+                    let mut connection = match handler.server.accept() {
+                        Ok((stream, _)) => {
+                            println!("Connection received ok!");
+                            stream},
+                        Err(e) => panic!("{e}")
+                    };
+                    // Bad practice to attempt to handle right away, as non-blocking io wont
+                    // guarentee we can fully read then write without encountering WouldBlock  
+                    //let buf_reader = BufReader::new(&connection);
+                    //let http_request : Vec<_> = buf_reader
+                    //        .lines()
+                    //        .map(|res| res.unwrap())
+                    //        .take_while(|line| !line.is_empty())
+                    //        .collect();
+                    //for string in http_request {
+                    //    println!("{}", string);
+                    //}
+                    let mut buffer = String::new();
+                    connection.read_to_string(&mut buffer);
+                    println!("{buffer}");
+                    let con = match connection.write_all("HTTP/1.1 200 OK\r\n Content-Type: text/plain\r\n\r\nb".as_bytes()) {
+                        Ok(_) => println!("All is good!"),
+                        Err(e) => panic!("{e}")
+                    };
                     drop(connection);
-                },
+                }
                 _ => panic!("Uh Oh...")
             }
         }
