@@ -1,16 +1,33 @@
 use std::error::Error;
+use mio::event::Event;
+use mio::event::Iter;
 use mio::{Interest, Poll, Events, Token};
-use mio::net::TcpListener;
+use mio::net::{TcpListener, TcpStream};
+use std::net::SocketAddr;
 
 pub struct IO_Handler {
     poll : Poll,
-    pub events : Events,
+    events : Events,
     pub server : TcpListener
+}
+
+pub enum ConnType {
+    Server,
+    Client
 }
 
 impl IO_Handler {
     pub fn poll_events(&mut self) {
         self.poll.poll(&mut self.events, None);
+    }
+    pub fn accept_connection(&self) -> (TcpStream, SocketAddr) {
+        match self.server.accept() {
+            Ok((stream, addr)) => (stream, addr),
+            Err(e) => panic!("")
+        }
+    }
+    pub fn get_events<'a>(&'a self) -> Iter<'a> {
+        self.events.iter()
     }
 }
 
