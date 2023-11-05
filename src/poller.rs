@@ -9,9 +9,9 @@ pub enum ConnType {
     Client(usize)
 }
 
-impl Into<usize> for ConnType {
-    fn into(self) -> usize {
-        match self {
+impl From<ConnType> for usize {
+    fn from(connection: ConnType) -> usize {
+        match connection {
             ConnType::Server => 0,
             ConnType::Client(identifier) => identifier
         }
