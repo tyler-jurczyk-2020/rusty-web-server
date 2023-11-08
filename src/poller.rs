@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::io;
 use mio::event::Iter;
 use mio::{Interest, Poll, Events, Token};
 use mio::net::{TcpListener, TcpStream};
@@ -25,17 +26,17 @@ pub struct IO_Handler {
 }
 
 impl IO_Handler {
-    pub fn poll_events(&mut self) {
-        self.poll.poll(&mut self.events, None);
+    pub fn poll_events(&mut self) -> io::Result<()> {
+        self.poll.poll(&mut self.events, None)
     }
-    pub fn accept_connection(&self) -> (TcpStream, SocketAddr) {
-        match self.server.accept() {
-            Ok((stream, addr)) => (stream, addr),
-            Err(e) => panic!("")
-        }
+    pub fn accept_connection(&self) -> io::Result<(TcpStream, SocketAddr)> {
+        self.server.accept()
     }
     pub fn get_events<'a>(&'a self) -> Iter<'a> {
         self.events.iter()
+    }
+    pub fn register_connection(&self, connection : &mut TcpStream, client : usize) -> io::Result<()> {
+        self.poll.registry().register(connection, Token(ConnType::Client(client).into()), Interest::READABLE | Interest::WRITABLE)
     }
 }
 

@@ -13,28 +13,25 @@ fn main() {
             match event.token() {
                 mio::Token(0) => {
                     println!("Client attempting to connect to the server!");
-                    let mut connection = handler.accept_connection(); 
-                    // Bad practice to attempt to handle right away, as non-blocking io wont
-                    // guarentee we can fully read then write without encountering WouldBlock  
-                    //let buf_reader = BufReader::new(&connection);
-                    //let http_request : Vec<_> = buf_reader
-                    //        .lines()
-                    //        .map(|res| res.unwrap())
-                    //        .take_while(|line| !line.is_empty())
-                    //        .collect();
-                    //for string in http_request {
-                    //    println!("{}", string);
-                    //}
+                    let mut connection = match handler.accept_connection() {
+                        Ok((stream, addr)) => (stream, addr),
+                        Err(e) => panic!("{e}") // Need to still handle WouldBlock
+                    };
+                    if let Err(_) = handler.register_connection(&mut connection.0, 1) {
+                        println!("Unable to register the connection")
+                    }
+
+
+                    // Dead code, should be moved into separate function
                     let mut buffer = String::new();
                     connection.0.read_to_string(&mut buffer);
                     println!("{buffer}");
-                    let con = match connection.0.write_all("HTTP/1.1 200 OK\r\n Content-Type: text/plain\r\n\r\nb".as_bytes()) {
+                    match connection.0.write_all("HTTP/1.1 200 OK\r\n Content-Type: text/plain\r\n\r\nb".as_bytes()) {
                         Ok(_) => println!("All is good!"),
                         Err(e) => panic!("{e}")
                     };
-                    drop(connection);
                 }
-                _ => panic!("Uh Oh...")
+                token => println!("We received client token: {token:?}"),
             }
         }
     }
