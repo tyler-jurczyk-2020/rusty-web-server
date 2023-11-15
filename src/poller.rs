@@ -38,6 +38,9 @@ impl IO_Handler {
     pub fn register_connection(&self, connection : &mut TcpStream, client : usize) -> io::Result<()> {
         self.poll.registry().register(connection, Token(ConnType::Client(client).into()), Interest::READABLE | Interest::WRITABLE)
     }
+    pub fn deregister_connection(&self, connection : &mut TcpStream) -> io::Result<()> {
+        self.poll.registry().deregister(connection)
+    }
 }
 
 pub fn initialize_poll() -> Result<IO_Handler, Box<dyn Error>> {
