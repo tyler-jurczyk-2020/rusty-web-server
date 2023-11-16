@@ -1,5 +1,5 @@
 use std::error::Error;
-use std::io;
+use std::io::{Read, Write, self};
 use mio::event::Iter;
 use mio::{Interest, Poll, Events, Token};
 use mio::net::{TcpListener, TcpStream};
@@ -51,4 +51,27 @@ pub fn initialize_poll() -> Result<IO_Handler, Box<dyn Error>> {
     Ok(IO_Handler { poll, events, server })
 }
 
+pub struct Client {
+    pub stream : TcpStream,
+    pub addr : SocketAddr
+
+}
+
+impl Client {
+    pub fn read_from_client(&mut self) -> String {
+        let mut buffer = String::new();
+        if let Err(e) = self.stream.read_to_string(&mut buffer) {
+            panic!("{e}") // For now consider inability to read as fatal
+        };
+        buffer 
+    }
+    pub fn write_to_client(&mut self, response : String) -> usize { // Returns the number of bytes written
+        match self.stream.write(response.as_bytes()) {
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0, // OS is not ready to write 
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => self.write_to_client(response), // Try again if read fails
+            Err(e) => panic!("{e}") // All other errors fatal
+        }
+    }
+}
 
