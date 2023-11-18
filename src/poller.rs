@@ -38,6 +38,9 @@ impl IO_Handler {
     pub fn register_connection(&self, connection : &mut TcpStream, client : usize) -> io::Result<()> {
         self.poll.registry().register(connection, Token(ConnType::Client(client).into()), Interest::READABLE | Interest::WRITABLE)
     }
+    pub fn reregister_connection(&self, connection : &mut TcpStream, client : usize, interest : Interest) -> io::Result<()> {
+        self.poll.registry().reregister(connection, Token(ConnType::Client(client).into()), interest)
+    }
     pub fn deregister_connection(&self, connection : &mut TcpStream) -> io::Result<()> {
         self.poll.registry().deregister(connection)
     }
@@ -58,12 +61,14 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn read_from_client(&mut self) -> String {
+    pub fn read_from_client(&mut self) -> (String, usize) {
         let mut buffer = String::new();
-        if let Err(e) = self.stream.read_to_string(&mut buffer) {
-            panic!("{e}") // For now consider inability to read as fatal
+        let bytes_read = match self.stream.read_to_string(&mut buffer) {
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0,
+            Err(e) => panic!("{e}")
         };
-        buffer 
+        (buffer, bytes_read)
     }
     pub fn write_to_client(&mut self, response : String) -> usize { // Returns the number of bytes written
         match self.stream.write(response.as_bytes()) {
