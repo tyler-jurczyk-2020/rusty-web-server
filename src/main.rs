@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use http::{Response, Request};
 use mio::Interest;
 use poller::Client;
+use poller::GenericConn;
+use poller::Serviceable;
 
 mod poller;
 mod http_parse;
@@ -21,11 +23,14 @@ fn main() {
                 mio::Token(0) => {
                     loop {
                         let mut connection = match handler.accept_connection() {
-                            Ok((stream, addr)) => Client { stream, addr },
+                            Ok((stream, addr)) => Client::Browser(GenericConn { stream, addr }) ,
                             Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                             Err(e) => panic!("{e}")
                         };
-                        handler.register_connection(&mut connection.stream, client_id).unwrap();
+                        match &mut connection {
+                            Client::Browser(b) => handler.register_connection(&mut b.stream, client_id).unwrap(),
+                            Client::Python() => panic!("Not yet implemented")
+                        };
                         clients.insert(mio::Token(client_id), connection);
                         client_id += 1;
                     }
