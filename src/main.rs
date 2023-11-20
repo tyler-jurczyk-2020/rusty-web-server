@@ -1,7 +1,7 @@
 use std::io::{BufReader, BufRead, Write, Read, self};
 use std::collections::HashMap;
 
-use http::Response;
+use http::{Response, Request};
 use mio::Interest;
 use poller::Client;
 
@@ -41,11 +41,15 @@ fn main() {
                         let mut valid_read = 0;
                         if event.is_writable() && need_to_write {
                             valid_write = client.write_to_client(http_response.clone());
-                            handler.reregister_connection(&mut client.stream, token.into(), Interest::READABLE); 
+                            //handler.reregister_connection(&mut client.stream, token.into(), Interest::READABLE); 
                             need_to_write = false;
                         } 
                         if event.is_readable() {
-                            valid_read = client.read_from_client().0.len();
+                            let def = match client.read_from_client() {
+                                Ok(r) => r,
+                                Err(e) => Request::default()
+                            };
+                            valid_read = 0; // Likely broken here, probably need to get rid of this line
                         }
                         // Break out of loop once there is no more data to read nor write
                         if valid_read == 0 && valid_write == 0 {

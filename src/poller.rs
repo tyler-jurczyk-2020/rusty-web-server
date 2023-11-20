@@ -1,12 +1,12 @@
-use std::error::Error;
-use std::io::{Read, Write, self};
-use http::Response;
+use std::io::{Read, Write, self, Error};
+use http::uri::InvalidUri;
+use http::{Response, Request};
 use mio::event::Iter;
 use mio::{Interest, Poll, Events, Token};
 use mio::net::{TcpListener, TcpStream};
 use std::net::SocketAddr;
 
-use crate::http_parse::ParseBytes;
+use crate::http_parse::{ParseBytes, ParseString};
 
 
 pub enum ConnType {
@@ -50,7 +50,7 @@ impl IO_Handler {
     }
 }
 
-pub fn initialize_poll() -> Result<IO_Handler, Box<dyn Error>> {
+pub fn initialize_poll() -> Result<IO_Handler, Box<dyn std::error::Error>> {
     let poll = Poll::new()?;
     let events = Events::with_capacity(10);
     let mut server = TcpListener::bind("127.0.0.1:7878".parse()?)?;
@@ -65,14 +65,17 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn read_from_client(&mut self) -> (String, usize) {
+    pub fn read_from_client(&mut self) -> Result<Request<()>, Error> {
         let mut buffer = String::new();
         let bytes_read = match self.stream.read_to_string(&mut buffer) {
             Ok(n) => n,
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => buffer.len(),
             Err(e) => panic!("{e}")
         };
-        (buffer, bytes_read)
+        if bytes_read > 0 {
+            return Ok(buffer.parse_to_struct())
+        }
+        Err(Error::new(io::ErrorKind::WriteZero, "Improper read of stream"))
     }
     pub fn write_to_client(&mut self, response : Response<String>) -> usize { // Returns the number of bytes written
         println!("{:?}", std::str::from_utf8(&response.clone().parse_to_bytes()).unwrap());
