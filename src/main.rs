@@ -1,16 +1,19 @@
 use std::io::{BufReader, BufRead, Write, Read, self};
 use std::collections::HashMap;
 
+use http::Response;
 use mio::Interest;
 use poller::Client;
 
 mod poller;
+mod http_parse;
 
 fn main() {
     let mut handler = poller::initialize_poll().unwrap();
     let mut clients = HashMap::new();
     let mut client_id = 1;
-    let http_response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHi from Rust!";
+    //let http_response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHi from Rust!";
+    let http_response = Response::builder().status(200).header("Content-Length", 9).body("OK OK OK!".to_string()).unwrap();
     loop {
         handler.poll_events().unwrap();
         for event in handler.get_events() {
@@ -37,8 +40,8 @@ fn main() {
                         let mut valid_write = 0;
                         let mut valid_read = 0;
                         if event.is_writable() && need_to_write {
-                            valid_write = client.write_to_client(http_response.to_string());
-                            handler.reregister_connection(&mut client.stream, 1, Interest::READABLE); 
+                            valid_write = client.write_to_client(http_response.clone());
+                            handler.reregister_connection(&mut client.stream, token.into(), Interest::READABLE); 
                             need_to_write = false;
                         } 
                         if event.is_readable() {

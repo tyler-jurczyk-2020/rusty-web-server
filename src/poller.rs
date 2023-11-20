@@ -1,9 +1,13 @@
 use std::error::Error;
 use std::io::{Read, Write, self};
+use http::Response;
 use mio::event::Iter;
 use mio::{Interest, Poll, Events, Token};
 use mio::net::{TcpListener, TcpStream};
 use std::net::SocketAddr;
+
+use crate::http_parse::ParseBytes;
+
 
 pub enum ConnType {
     Server,
@@ -70,8 +74,9 @@ impl Client {
         };
         (buffer, bytes_read)
     }
-    pub fn write_to_client(&mut self, response : String) -> usize { // Returns the number of bytes written
-        match self.stream.write(response.as_bytes()) {
+    pub fn write_to_client(&mut self, response : Response<String>) -> usize { // Returns the number of bytes written
+        println!("{:?}", std::str::from_utf8(&response.clone().parse_to_bytes()).unwrap());
+        match self.stream.write(&response.clone().parse_to_bytes()) {
             Ok(n) => n,
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0, // OS is not ready to write 
             Err(e) if e.kind() == io::ErrorKind::Interrupted => self.write_to_client(response), // Try again if read fails
