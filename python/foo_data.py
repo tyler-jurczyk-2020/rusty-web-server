@@ -4,10 +4,12 @@ import numpy as np
 
 url = "http://127.0.0.1:7878"
 
-response = requests.get(url)
+session = requests.Session()
+
+response = session.get(url)
 print(response.text)
 
 while(True):
     data = np.random.normal(0, 1);
-    requests.post(url, data=f'{data}')
+    session.post(url, data=f'{data}')
     time.sleep(5)
