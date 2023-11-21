@@ -1,3 +1,4 @@
+use std::fs::File;
 use std::io::{Read, Write, self, Error};
 use http::{Response, Request};
 use mio::event::Iter;
@@ -99,15 +100,52 @@ impl Serviceable for GenericConn {
 }
 
 impl Client {
-    pub fn handle_request(&mut self) {
+    pub fn handle_request(&mut self, optional_response : Option<Request<String>>) -> Response<String> {
+        if let Some(r) = optional_response {
+            let mut contents = Vec::new();
+            if r.method().eq(&http::method::Method::GET) {
+                let mut file = match File::open("./src/webpage/home.html") {
+                    Ok(f) => f,
+                    Err(e) => panic!("{e}")
+                };
+                if let Err(e) = file.read_to_end(&mut contents) {
+                    panic!("{e}");
+                } 
+            }
+            let contents_as_string = String::from_utf8(contents).unwrap();
+            return Response::builder()
+                .status(200)
+                .header("Content-Length", contents_as_string.len())
+                .body(contents_as_string)
+                .unwrap()
+        }
         match self {
-            Client::Python(g) | Client::Browser(g) => {
+            Client::Python(g) => {
                 if let Ok(r) = g.read_from_client() {
                     println!("{:?}", r);
                 }
+                Response::default()
             },
-            _ => panic!("Can't handle request of unknown!!")
-
+            Client::Browser(g) | Client::Unknown(g) => {
+                let mut contents = Vec::new();
+                if let Ok(r) = g.read_from_client() {
+                    if r.method().eq(&http::method::Method::GET) {
+                        let mut file = match File::open("./src/webpage/home.html") {
+                            Ok(f) => f,
+                            Err(e) => panic!("{e}")
+                        };
+                        if let Err(e) = file.read_to_end(&mut contents) {
+                            panic!("{e}");
+                        } 
+                    }
+                }
+                let contents_as_string = String::from_utf8(contents).unwrap();
+                Response::builder()
+                    .status(200)
+                    .header("Content-Length", contents_as_string.len())
+                    .body(contents_as_string)
+                    .unwrap()
+            }
         } 
     } 
 }

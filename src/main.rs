@@ -15,7 +15,7 @@ fn main() {
     let mut clients = HashMap::new();
     let mut client_id = 1;
     //let http_response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHi from Rust!";
-    let http_response = Response::builder().status(200).header("Content-Length", 9).body("OK OK OK!".to_string()).unwrap();
+    let mut http_response = Response::builder().status(200).header("Content-Length", 9).body("OK OK OK!".to_string()).unwrap();
     let http_response1 = Response::builder().status(200).header("Content-Length", 9).body("eK eK eK!".to_string()).unwrap();
     loop {
         handler.poll_events().unwrap();
@@ -47,6 +47,13 @@ fn main() {
                             if let Ok(r) = g.read_from_client() {
                                 println!("{:?}", r);
                                 handler.reregister_connection(&mut g.stream, token.into(), Interest::READABLE | Interest::WRITABLE);
+                                // Follow check allows us to load browser page even through we
+                                // consume the readable event
+                                if let Some(s) = r.headers().get("User-Agent") {
+                                    if s.ne("python-requests/2.31.0") {
+                                        http_response = client.handle_request(Some(r.clone()));
+                                    }
+                                }
                                 let removed_item = clients.remove(&token).unwrap();
                                 match r.headers().get("User-Agent").unwrap().to_str().unwrap() {
                                     "python-requests/2.31.0" => {
@@ -68,6 +75,9 @@ fn main() {
                         loop {
                             let mut valid_write = 0;
                             let mut valid_read = 0;
+                            if event.is_readable() {
+                                http_response = client.handle_request(None); 
+                            }
                             if event.is_writable() && need_to_write {
                                 match client {
                                     Client::Browser(g) => {
@@ -80,9 +90,6 @@ fn main() {
                                     },
                                     _ => panic!("Attempting to write to potentially unknown client!")
                                 } 
-                            }
-                            if event.is_readable() {
-                                client.handle_request() 
                             }
                             // Break out of loop once there is no more data to read nor write
                             if valid_read == 0 && valid_write == 0 {
