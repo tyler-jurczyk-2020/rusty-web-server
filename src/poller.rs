@@ -1,5 +1,4 @@
 use std::io::{Read, Write, self, Error};
-use http::uri::InvalidUri;
 use http::{Response, Request};
 use mio::event::Iter;
 use mio::{Interest, Poll, Events, Token};
@@ -21,7 +20,8 @@ pub enum ConnType {
 
 pub enum Client {
     Browser(GenericConn),
-    Python()
+    Python(),
+    Unknown(GenericConn)
 }
 
 impl From<ConnType> for usize {
@@ -50,7 +50,7 @@ impl IO_Handler {
         self.events.iter()
     }
     pub fn register_connection(&self, connection : &mut TcpStream, client : usize) -> io::Result<()> {
-        self.poll.registry().register(connection, Token(ConnType::Client(client).into()), Interest::READABLE | Interest::WRITABLE)
+        self.poll.registry().register(connection, Token(ConnType::Client(client).into()), Interest::READABLE)
     }
     pub fn reregister_connection(&self, connection : &mut TcpStream, client : usize, interest : Interest) -> io::Result<()> {
         self.poll.registry().reregister(connection, Token(ConnType::Client(client).into()), interest)
@@ -73,36 +73,26 @@ pub struct GenericConn {
     pub addr : SocketAddr
 }
 
-impl Serviceable for Client {
+impl Serviceable for GenericConn {
     fn read_from_client(&mut self) -> Result<Request<()>, Error> {
         let mut buffer = String::new();
         let bytes_read;
-        match self {
-            Client::Browser(b) => {
-                bytes_read = match b.stream.read_to_string(&mut buffer) {
-                Ok(n) => n,
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => buffer.len(),
-                Err(e) => panic!("{e}")
-                };
-            },
-            Client::Python() => panic!("Still not implemented!")
-        };
+            bytes_read = match self.stream.read_to_string(&mut buffer) {
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => buffer.len(),
+            Err(e) => panic!("{e}")
+            };
         if bytes_read > 0 {
             return Ok(buffer.parse_to_struct())
         }
         Err(Error::new(io::ErrorKind::WriteZero, "Improper read of stream"))
     }
     fn write_to_client(&mut self, response : Response<String>) -> usize { // Returns the number of bytes written
-        match self {
-            Client::Browser(b)=> { 
-                match b.stream.write(&response.clone().parse_to_bytes()) {
-                    Ok(n) => n,
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0, // OS is not ready to write 
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => self.write_to_client(response), // Try again if read fails
-                    Err(e) => panic!("{e}") // All other errors fatal
-                }
-            },
-            Client::Python() => panic!("Don't try me")
+        match self.stream.write(&response.clone().parse_to_bytes()) {
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0, // OS is not ready to write 
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => self.write_to_client(response), // Try again if read fails
+            Err(e) => panic!("{e}") // All other errors fatal
         }
     }
 }

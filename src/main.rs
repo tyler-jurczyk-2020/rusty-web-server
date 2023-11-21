@@ -1,4 +1,4 @@
-use std::io::{BufReader, BufRead, Write, Read, self};
+use std::io::{self};
 use std::collections::HashMap;
 
 use http::{Response, Request};
@@ -23,14 +23,13 @@ fn main() {
                 mio::Token(0) => {
                     loop {
                         let mut connection = match handler.accept_connection() {
-                            Ok((stream, addr)) => Client::Browser(GenericConn { stream, addr }) ,
+                            Ok((stream, addr)) => Client::Unknown(GenericConn { stream, addr }) ,
                             Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                             Err(e) => panic!("{e}")
                         };
-                        match &mut connection {
-                            Client::Browser(b) => handler.register_connection(&mut b.stream, client_id).unwrap(),
-                            Client::Python() => panic!("Not yet implemented")
-                        };
+                        if let Client::Unknown(g) = &mut connection {
+                            handler.register_connection(&mut g.stream, client_id);
+                        }
                         clients.insert(mio::Token(client_id), connection);
                         client_id += 1;
                     }
@@ -40,29 +39,55 @@ fn main() {
                         Some(c) => c,
                         None => panic!("Unable to get client, here was the passed token: {token:?}")
                     };
-                    let mut need_to_write = true;
-                    loop {
-                        let mut valid_write = 0;
-                        let mut valid_read = 0;
-                        if event.is_writable() && need_to_write {
-                            valid_write = client.write_to_client(http_response.clone());
-                            //handler.reregister_connection(&mut client.stream, token.into(), Interest::READABLE); 
-                            need_to_write = false;
-                        } 
+                    // We will always upgrade the unknown client before proceeding with any other
+                    // operations
+                    if let Client::Unknown(g) = client {
                         if event.is_readable() {
-                            let def = match client.read_from_client() {
-                                Ok(r) => r,
-                                Err(e) => Request::default()
-                            };
-                            valid_read = 0; // Likely broken here, probably need to get rid of this line
-                        }
-                        // Break out of loop once there is no more data to read nor write
-                        if valid_read == 0 && valid_write == 0 {
-                            break;
+                            if let Ok(r) = g.read_from_client() {
+                                let mut removed_item = clients.remove(&token).unwrap();
+                                match r.headers().get("User-Agent").unwrap().to_str().unwrap() {
+                                    _ => {
+                                        if let Client::Unknown(mut g) = removed_item {
+                                            handler.reregister_connection(&mut g.stream, token.into(), Interest::READABLE | Interest::WRITABLE);
+                                            clients.insert(token, Client::Browser(g));
+                                        }
+                                    }
+                                };
+                            } 
                         }
                     }
-                    //handler.deregister_connection(&mut client.stream).unwrap();
-                    //clients.remove(&token);
+                    else {
+                        let mut need_to_write = true;
+                        loop {
+                            let mut valid_write = 0;
+                            let mut valid_read = 0;
+                            if event.is_writable() && need_to_write {
+                                match client {
+                                    Client::Browser(g) => {
+                                        valid_write = g.write_to_client(http_response.clone());
+                                        //handler.reregister_connection(&mut client.stream, token.into(), Interest::READABLE); 
+                                        need_to_write = false;
+                                    },
+                                    _ => panic!("Attempting to write to potentially unknown client!")
+                                } 
+                            }
+                            if event.is_readable() {
+                                match client {
+                                    Client::Browser(g) => {
+                                        match g.read_from_client() {
+                                            Ok(r) => r,
+                                            Err(_) => Request::default()
+                                        } 
+                                    }, 
+                                    _ => panic!("Attempting to read from potentially unknown client!")
+                                };
+                            }
+                            // Break out of loop once there is no more data to read nor write
+                            if valid_read == 0 && valid_write == 0 {
+                                break;
+                            }
+                        }
+                    }
                 }            
             }
         }
