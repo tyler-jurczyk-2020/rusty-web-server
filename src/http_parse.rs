@@ -29,8 +29,9 @@ impl ParseBytes for Response<String> {
     }
 }
 
-impl ParseString<Request<()>> for String {
-    fn parse_to_struct(&self) -> Request<()> {
+impl ParseString<Request<String>> for String {
+    fn parse_to_struct(&self) -> Request<String> {
+        println!("{}", self);
         let mut split = self.split("\r\n");
         let mut request = Request::builder();
         if let Some(line) = split.next() {
@@ -41,13 +42,13 @@ impl ParseString<Request<()>> for String {
             };
             request = request.method(m).uri(u).version(Version::default());
         };
-        for line in split {
+        for line in &mut split {
             if line.eq("") {
                 break;
             }
             let mut entry = line.split(": ");
             request = request.header(entry.next().unwrap(), entry.next().unwrap())
         }
-        request.body(()).unwrap()
+        request.body(split.next().unwrap().to_string()).unwrap()
     }
 }

@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use crate::http_parse::{ParseBytes, ParseString};
 
 pub trait Serviceable {
-    fn read_from_client(&mut self) -> Result<Request<()>, Error>;
+    fn read_from_client(&mut self) -> Result<Request<String>, Error>;
     fn write_to_client(&mut self, response : Response<String>) -> usize;
 }
 
@@ -20,7 +20,7 @@ pub enum ConnType {
 
 pub enum Client {
     Browser(GenericConn),
-    Python(),
+    Python(GenericConn),
     Unknown(GenericConn)
 }
 
@@ -74,13 +74,13 @@ pub struct GenericConn {
 }
 
 impl Serviceable for GenericConn {
-    fn read_from_client(&mut self) -> Result<Request<()>, Error> {
+    fn read_from_client(&mut self) -> Result<Request<String>, Error> {
         let mut buffer = String::new();
         let bytes_read;
             bytes_read = match self.stream.read_to_string(&mut buffer) {
-            Ok(n) => n,
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => buffer.len(),
-            Err(e) => panic!("{e}")
+                Ok(n) => n,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => buffer.len(),
+                Err(e) => panic!("{e}")
             };
         if bytes_read > 0 {
             return Ok(buffer.parse_to_struct())
@@ -92,8 +92,22 @@ impl Serviceable for GenericConn {
             Ok(n) => n,
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0, // OS is not ready to write 
             Err(e) if e.kind() == io::ErrorKind::Interrupted => self.write_to_client(response), // Try again if read fails
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => 0, // Connection probably was closed
             Err(e) => panic!("{e}") // All other errors fatal
         }
     }
 }
 
+impl Client {
+    pub fn handle_request(&mut self) {
+        match self {
+            Client::Python(g) | Client::Browser(g) => {
+                if let Ok(r) = g.read_from_client() {
+                    println!("{:?}", r);
+                }
+            },
+            _ => panic!("Can't handle request of unknown!!")
+
+        } 
+    } 
+}
