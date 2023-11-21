@@ -5,6 +5,7 @@ use mio::event::Iter;
 use mio::{Interest, Poll, Events, Token};
 use mio::net::{TcpListener, TcpStream};
 use std::net::SocketAddr;
+use http::method::Method;
 
 use crate::http_parse::{ParseBytes, ParseString};
 
@@ -102,22 +103,14 @@ impl Serviceable for GenericConn {
 impl Client {
     pub fn handle_request(&mut self, optional_response : Option<Request<String>>) -> Response<String> {
         if let Some(r) = optional_response {
-            let mut contents = Vec::new();
+            let mut contents : Option<Vec<u8>> = None;
             if r.method().eq(&http::method::Method::GET) {
-                let mut file = match File::open("./src/webpage/home.html") {
-                    Ok(f) => f,
-                    Err(e) => panic!("{e}")
-                };
-                if let Err(e) = file.read_to_end(&mut contents) {
-                    panic!("{e}");
-                } 
+                contents = match Client::load_file("./src/webpage/home.html".to_string()) {
+                    Ok(c) => Some(c),
+                    Err(_) => None 
+                }
             }
-            let contents_as_string = String::from_utf8(contents).unwrap();
-            return Response::builder()
-                .status(200)
-                .header("Content-Length", contents_as_string.len())
-                .body(contents_as_string)
-                .unwrap()
+            return Client::build_response(contents)
         }
         match self {
             Client::Python(g) => {
@@ -127,25 +120,46 @@ impl Client {
                 Response::default()
             },
             Client::Browser(g) | Client::Unknown(g) => {
-                let mut contents = Vec::new();
+                let mut file_contents : Option<Vec<u8>> = None;
                 if let Ok(r) = g.read_from_client() {
-                    if r.method().eq(&http::method::Method::GET) {
-                        let mut file = match File::open("./src/webpage/home.html") {
-                            Ok(f) => f,
-                            Err(e) => panic!("{e}")
-                        };
-                        if let Err(e) = file.read_to_end(&mut contents) {
-                            panic!("{e}");
-                        } 
-                    }
-                }
-                let contents_as_string = String::from_utf8(contents).unwrap();
+                    let file_to_load = "./src/webpage".to_string() + &r.uri().to_string();
+                    file_contents = match r.method() {
+                        &Method::GET => match Client::load_file(file_to_load) {
+                            Ok(c) => Some(c),
+                            Err(_) => None 
+                        },
+                        _ => panic!("Method currently not handled!") 
+                    };
+                };
+                Client::build_response(file_contents) 
+            }
+        }
+    } 
+
+    fn build_response(contents : Option<Vec<u8>>) -> Response<String> {
+        match contents {
+            Some(c) => {
+                let contents_as_string = String::from_utf8(c).unwrap();
                 Response::builder()
-                    .status(200)
-                    .header("Content-Length", contents_as_string.len())
-                    .body(contents_as_string)
+                .status(200)
+                .header("Content-Length", contents_as_string.len())
+                .body(contents_as_string)
+                .unwrap()
+            },
+            None => {
+                Response::builder()
+                    .status(404)
+                    .header("Content-Length", 0)
+                    .body("".to_string())
                     .unwrap()
             }
-        } 
-    } 
+        }
+    }
+
+    fn load_file(location : String) -> Result<Vec<u8>, io::Error> {
+        let mut contents = Vec::new();
+        let mut file = File::open(location)?;
+        file.read_to_end(&mut contents)?; 
+        Ok(contents)
+    }
 }
