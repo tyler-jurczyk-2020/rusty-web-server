@@ -158,8 +158,16 @@ impl Client {
 
     fn load_file(location : String) -> Result<Vec<u8>, io::Error> {
         let mut contents = Vec::new();
-        let mut file = File::open(location)?;
-        file.read_to_end(&mut contents)?; 
-        Ok(contents)
+        // stats is reserved as a special file that will instead load the data obtained from python
+        match location.as_str() {
+            "./src/webpage/stats" => {
+                Ok("I would send stats".as_bytes().to_vec()) 
+            },
+            _ =>  {
+                let mut file = File::open(location)?;
+                file.read_to_end(&mut contents)?; 
+                Ok(contents)
+            }
+        }
     }
 }
