@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::io::{self};
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use http::{Response, Request};
 use mio::Interest;
@@ -14,9 +16,18 @@ fn main() {
     let mut handler = poller::initialize_poll().unwrap();
     let mut clients = HashMap::new();
     let mut client_id = 1;
+    let mut global_data : Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
     //let http_response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHi from Rust!";
-    let mut http_response = Response::builder().status(200).header("Content-Length", 9).body("OK OK OK!".to_string()).unwrap();
-    let http_response1 = Response::builder().status(200).header("Content-Length", 9).body("eK eK eK!".to_string()).unwrap();
+    let mut http_response = Response::builder()
+                                .status(200)
+                                .header("Content-Length", 9)
+                                .body("OK OK OK!"
+                                .to_string()).unwrap();
+    let http_response1 = Response::builder()
+                            .status(200)
+                            .header("Content-Length", 9)
+                            .body("eK eK eK!"
+                            .to_string()).unwrap();
     loop {
         handler.poll_events().unwrap();
         for event in handler.get_events() {
@@ -53,17 +64,18 @@ fn main() {
                                     if s.ne("python-requests/2.31.0") {
                                         http_response = client.handle_request(Some(r.clone()));
                                     }
+                                    println!("Response: {http_response:?}");
                                 }
                                 let removed_item = clients.remove(&token).unwrap();
                                 match r.headers().get("User-Agent").unwrap().to_str().unwrap() {
                                     "python-requests/2.31.0" => {
                                         if let Client::Unknown(g) = removed_item {
-                                            clients.insert(token, Client::Python(g));
+                                            clients.insert(token, Client::Python(g, Rc::clone(&global_data)));
                                         } 
                                     }
                                     _ => {
                                         if let Client::Unknown(g) = removed_item {
-                                            clients.insert(token, Client::Browser(g));
+                                            clients.insert(token, Client::Browser(g, Rc::clone(&global_data)));
                                         }
                                     }
                                 };
@@ -80,11 +92,11 @@ fn main() {
                             }
                             if event.is_writable() && need_to_write {
                                 match client {
-                                    Client::Browser(g) => {
+                                    Client::Browser(g, _) => {
                                         valid_write = g.write_to_client(http_response.clone());
                                         need_to_write = false;
                                     },
-                                    Client::Python(g) => {
+                                    Client::Python(g, _) => {
                                         valid_write = g.write_to_client(http_response1.clone());
                                         need_to_write = false;
                                     },

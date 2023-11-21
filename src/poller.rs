@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::fs::File;
 use std::io::{Read, Write, self, Error};
 use http::{Response, Request};
@@ -21,8 +23,8 @@ pub enum ConnType {
 }
 
 pub enum Client {
-    Browser(GenericConn),
-    Python(GenericConn),
+    Browser(GenericConn, Rc<RefCell<Vec<u8>>>),
+    Python(GenericConn, Rc<RefCell<Vec<u8>>>),
     Unknown(GenericConn)
 }
 
@@ -94,7 +96,7 @@ impl Serviceable for GenericConn {
             Ok(n) => n,
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0, // OS is not ready to write 
             Err(e) if e.kind() == io::ErrorKind::Interrupted => self.write_to_client(response), // Try again if read fails
-            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => 0, // Connection probably was closed
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => panic!("Uh Oh, Connection Lost"), // Connection probably was closed
             Err(e) => panic!("{e}") // All other errors fatal
         }
     }
@@ -105,7 +107,7 @@ impl Client {
         if let Some(r) = optional_response {
             let mut contents : Option<Vec<u8>> = None;
             if r.method().eq(&http::method::Method::GET) {
-                contents = match Client::load_file("./src/webpage/home.html".to_string()) {
+                contents = match Client::load_file("./src/webpage/home.html".to_string(), None) {
                     Ok(c) => Some(c),
                     Err(_) => None 
                 }
@@ -113,18 +115,20 @@ impl Client {
             return Client::build_response(contents)
         }
         match self {
-            Client::Python(g) => {
+            Client::Python(g, d) => {
                 if let Ok(r) = g.read_from_client() {
-                    println!("{:?}", r);
+                    let mut data = d.borrow_mut(); 
+                    data.clear();
+                    data.extend_from_slice(r.body().as_bytes());
                 }
                 Response::default()
             },
-            Client::Browser(g) | Client::Unknown(g) => {
+            Client::Browser(g, d) => {
                 let mut file_contents : Option<Vec<u8>> = None;
                 if let Ok(r) = g.read_from_client() {
                     let file_to_load = "./src/webpage".to_string() + &r.uri().to_string();
                     file_contents = match r.method() {
-                        &Method::GET => match Client::load_file(file_to_load) {
+                        &Method::GET => match Client::load_file(file_to_load, Some(d)) {
                             Ok(c) => Some(c),
                             Err(_) => None 
                         },
@@ -132,7 +136,8 @@ impl Client {
                     };
                 };
                 Client::build_response(file_contents) 
-            }
+            },
+            _ => panic!("Unknown requests not supported!")
         }
     } 
 
@@ -156,12 +161,17 @@ impl Client {
         }
     }
 
-    fn load_file(location : String) -> Result<Vec<u8>, io::Error> {
+    fn load_file(location : String, data : Option<&mut Rc<RefCell<Vec<u8>>>>) -> Result<Vec<u8>, io::Error> {
         let mut contents = Vec::new();
         // stats is reserved as a special file that will instead load the data obtained from python
         match location.as_str() {
             "./src/webpage/stats" => {
-                Ok("I would send stats".as_bytes().to_vec()) 
+                if let Some(d) = data {
+                    Ok(d.borrow().to_vec()) 
+                }
+                else {
+                    Err(io::Error::new(io::ErrorKind::Other, "Unable to access data"))
+                }
             },
             _ =>  {
                 let mut file = File::open(location)?;

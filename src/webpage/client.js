@@ -6,4 +6,6 @@ function call_server() {
         .then(data=>console.log(data));
 }
 
-call_server();
+for(let i=0; i<1000; i++) {
+    call_server();
+}
