@@ -16,7 +16,6 @@ mod client;
 fn main() {
     let mut handler = poller::initialize_poll().unwrap();
     let mut clients : HashMap<mio::Token, Client> = HashMap::new();
-    let tasklet : Rc<RefCell<TaskQueue>> = Rc::new(RefCell::new(TaskQueue::new()));
     let mut client_id = 1;
     let global_data : Rc<RefCell<GlobalHandle>> = Rc::new(RefCell::new(GlobalHandle::new()));
     //let http_response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHi from Rust!";
@@ -33,24 +32,18 @@ fn main() {
     loop {
         handler.poll_events().unwrap();
         {
-            let mut borrowed_tasklet = tasklet.borrow_mut();
-            if borrowed_tasklet.serviceable > 0 {
-                // Probably should have active and inactive queues, but number of tasks queued should
-                // be small to none
-                let mut tasks_to_remove = 0;
-                for task in &borrowed_tasklet.queue {
-                    if task.service {
-                        let cl = clients.get_mut(&task.token).unwrap();
-                        if let Client::Browser(ref mut i, _) = cl {
-                            (task.handler)(i, http_response.clone()); 
-                            tasks_to_remove += 1;
+            let mut borrowed_handle = global_data.borrow_mut();
+            if borrowed_handle.task_queue.serviceable > 0 {
+                if !borrowed_handle.task_queue.queue.is_empty() {
+                    let handle_task = borrowed_handle.task_queue.queue.pop();
+                    if let Some(t) = handle_task {
+                        let client_info = clients.get_mut(&t.token).unwrap();
+                        if let Client::Browser(i, _) = client_info {
+                            (t.handler)(i, borrowed_handle.data.clone());
+                            borrowed_handle.task_queue.serviceable -= 1;
+                            borrowed_handle.is_fresh = false;
                         }
-                    } 
-                } 
-                while tasks_to_remove > 0 {
-                    borrowed_tasklet.queue.pop();
-                    borrowed_tasklet.serviceable -= 1;
-                    tasks_to_remove -= 1;
+                    }
                 }
             }
         }
@@ -59,7 +52,7 @@ fn main() {
                 mio::Token(0) => {
                     loop {
                         let mut connection = match handler.accept_connection() {
-                            Ok((stream, addr)) => Client::Unknown(ClientInfo { stream, token: mio::Token(client_id) }) ,
+                            Ok((stream, _)) => Client::Unknown(ClientInfo { stream, token: mio::Token(client_id) }) ,
                             Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                             Err(e) => panic!("{e}")
                         };

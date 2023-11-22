@@ -66,6 +66,7 @@ impl Client {
                     handle.data.clear();
                     println!("Body: {:?}", r.body().as_bytes());
                     handle.data.extend_from_slice(r.body().as_bytes());
+                    handle.is_fresh = true;
                 }
                 Ok(Response::default())
             },
@@ -93,7 +94,7 @@ impl Client {
         }
     } 
 
-    fn build_response(contents : Option<Vec<u8>>) -> Response<String> {
+    pub fn build_response(contents : Option<Vec<u8>>) -> Response<String> {
         match contents {
             Some(c) => {
                 let contents_as_string = String::from_utf8(c).unwrap();
@@ -119,8 +120,15 @@ impl Client {
         match location.as_str() {
             "./src/webpage/stats" => {
                 if let Some(h) = handle {
-                    println!("{:?}", h.borrow().data.to_vec());
-                    Ok(h.borrow().data.to_vec()) 
+                let mut borrowed_handle = h.borrow_mut();
+                    if borrowed_handle.is_fresh {     
+                        println!("{:?}", borrowed_handle.data.to_vec());
+                        borrowed_handle.is_fresh = false;
+                        Ok(borrowed_handle.data.to_vec()) 
+                    }
+                    else {
+                        Err(Error::new(io::ErrorKind::WouldBlock, "Newer data not yet available"))
+                    }
                 }
                 else {
                     Err(io::Error::new(io::ErrorKind::Other, "Unable to access data"))
