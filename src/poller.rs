@@ -1,7 +1,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::fs::File;
-use std::io::{Read, Write, self, Error};
+use std::io::{Read, Write, self, Error, ErrorKind};
+use std::time::Duration;
 use http::{Response, Request};
 use mio::event::Iter;
 use mio::{Interest, Poll, Events, Token};
@@ -23,7 +24,7 @@ pub enum ConnType {
 }
 
 pub enum Client {
-    Browser(GenericConn, Rc<RefCell<Vec<u8>>>),
+    Browser(GenericConn, Rc<RefCell<Vec<u8>>>, Rc<RefCell<TaskQueue>>, Token),
     Python(GenericConn, Rc<RefCell<Vec<u8>>>),
     Unknown(GenericConn)
 }
@@ -45,7 +46,7 @@ pub struct IO_Handler {
 
 impl IO_Handler {
     pub fn poll_events(&mut self) -> io::Result<()> {
-        self.poll.poll(&mut self.events, None)
+        self.poll.poll(&mut self.events, Some(Duration::new(5, 0)))
     }
     pub fn accept_connection(&self) -> io::Result<(TcpStream, SocketAddr)> {
         self.server.accept()
@@ -84,6 +85,8 @@ impl Serviceable for GenericConn {
             bytes_read = match self.stream.read_to_string(&mut buffer) {
                 Ok(n) => n,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => buffer.len(),
+                Err(e) if e.kind() == io::ErrorKind::ConnectionReset => 0, // Connection was reset,
+                                                                           // unable to read
                 Err(e) => panic!("{e}")
             };
         if bytes_read > 0 {
@@ -96,46 +99,54 @@ impl Serviceable for GenericConn {
             Ok(n) => n,
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0, // OS is not ready to write 
             Err(e) if e.kind() == io::ErrorKind::Interrupted => self.write_to_client(response), // Try again if read fails
-            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => panic!("Uh Oh, Connection Lost"), // Connection probably was closed
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => 0, // Connection probably was closed,
+                                                              // NEED TO CLEAN UP!!! 
             Err(e) => panic!("{e}") // All other errors fatal
         }
     }
 }
 
 impl Client {
-    pub fn handle_request(&mut self, optional_response : Option<Request<String>>) -> Response<String> {
+    pub fn handle_request(&mut self, optional_response : Option<Request<String>>) -> Result<Response<String>, io::Error> {
         if let Some(r) = optional_response {
             let mut contents : Option<Vec<u8>> = None;
             if r.method().eq(&http::method::Method::GET) {
-                contents = match Client::load_file("./src/webpage/home.html".to_string(), None) {
+                contents = match Client::load_file("./src/webpage/home.html".to_string(), None, None) {
                     Ok(c) => Some(c),
                     Err(_) => None 
                 }
             }
-            return Client::build_response(contents)
+            return Ok(Client::build_response(contents))
         }
         match self {
             Client::Python(g, d) => {
                 if let Ok(r) = g.read_from_client() {
                     let mut data = d.borrow_mut(); 
                     data.clear();
+                    println!("Body: {:?}", r.body().as_bytes());
                     data.extend_from_slice(r.body().as_bytes());
                 }
-                Response::default()
+                Ok(Response::default())
             },
-            Client::Browser(g, d) => {
+            Client::Browser(g, d, t, tok) => {
                 let mut file_contents : Option<Vec<u8>> = None;
                 if let Ok(r) = g.read_from_client() {
                     let file_to_load = "./src/webpage".to_string() + &r.uri().to_string();
                     file_contents = match r.method() {
-                        &Method::GET => match Client::load_file(file_to_load, Some(d)) {
+                        &Method::GET => match Client::load_file(file_to_load.clone(), Some(d), Some(t)) {
                             Ok(c) => Some(c),
                             Err(_) => None 
                         },
                         _ => panic!("Method currently not handled!") 
                     };
+                    if file_to_load.eq("./src/webpage/stats") {
+                        let mut borrow_task = t.borrow_mut(); 
+                        borrow_task.queue.push(Task::new(write_task, *tok));
+                        borrow_task.serviceable += 1;
+                        return Err(Error::new(ErrorKind::WouldBlock, String::from_utf8(file_contents.unwrap()).unwrap()))
+                    }
                 };
-                Client::build_response(file_contents) 
+                Ok(Client::build_response(file_contents))
             },
             _ => panic!("Unknown requests not supported!")
         }
@@ -161,12 +172,14 @@ impl Client {
         }
     }
 
-    fn load_file(location : String, data : Option<&mut Rc<RefCell<Vec<u8>>>>) -> Result<Vec<u8>, io::Error> {
+    fn load_file(location : String, data : Option<&mut Rc<RefCell<Vec<u8>>>>,
+                 tasklet : Option<&mut Rc<RefCell<TaskQueue>>>) -> Result<Vec<u8>, io::Error> {
         let mut contents = Vec::new();
         // stats is reserved as a special file that will instead load the data obtained from python
         match location.as_str() {
             "./src/webpage/stats" => {
                 if let Some(d) = data {
+                    println!("{:?}", d.borrow().to_vec());
                     Ok(d.borrow().to_vec()) 
                 }
                 else {
@@ -179,5 +192,40 @@ impl Client {
                 Ok(contents)
             }
         }
+    }
+}
+
+pub struct TaskQueue {
+    pub queue : Vec<Task>,
+    pub serviceable : u32
+}
+
+impl TaskQueue {
+    pub fn new() -> TaskQueue {
+        TaskQueue { queue: Vec::new(), serviceable: 0 }
+    }
+}
+
+pub struct Task {
+    pub service : bool,
+    pub handler : fn(&mut GenericConn, Response<String>) -> usize,
+    pub token : Token
+}
+
+impl Task {
+    pub fn new(function : fn(&mut GenericConn, Response<String>) -> usize, token : Token ) -> Task {
+        Task { service: true, handler: function, token: token}
+    }
+}
+
+pub fn write_task(generic : &mut GenericConn, response : Response<String>) -> usize {
+    match generic.stream.write(&response.clone().parse_to_bytes()) {
+        Ok(n) => n,
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0, // OS is not ready to write 
+        Err(e) if e.kind() == io::ErrorKind::Interrupted => write_task(generic, response), // Try again if read fails
+        Err(e) if e.kind() == io::ErrorKind::ConnectionReset => 0, // Connection Reset
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => 0, // Connection probably was closed,
+                                                              // NEED TO CLEAN UP!!!
+        Err(e) => panic!("{e}") // All other errors fatal
     }
 }

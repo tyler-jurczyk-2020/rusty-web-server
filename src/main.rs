@@ -1,11 +1,11 @@
 use std::cell::RefCell;
-use std::io::{self};
+use std::io::{self, ErrorKind};
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use http::{Response, Request};
 use mio::Interest;
-use poller::Client;
+use poller::{Client, TaskQueue};
 use poller::GenericConn;
 use poller::Serviceable;
 
@@ -14,9 +14,10 @@ mod http_parse;
 
 fn main() {
     let mut handler = poller::initialize_poll().unwrap();
-    let mut clients = HashMap::new();
+    let mut clients : HashMap<mio::Token, Client> = HashMap::new();
+    let tasklet : Rc<RefCell<TaskQueue>> = Rc::new(RefCell::new(TaskQueue::new()));
     let mut client_id = 1;
-    let mut global_data : Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
+    let global_data : Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
     //let http_response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHi from Rust!";
     let mut http_response = Response::builder()
                                 .status(200)
@@ -30,6 +31,28 @@ fn main() {
                             .to_string()).unwrap();
     loop {
         handler.poll_events().unwrap();
+        {
+            let mut borrowed_tasklet = tasklet.borrow_mut();
+            if borrowed_tasklet.serviceable > 0 {
+                // Probably should have active and inactive queues, but number of tasks queued should
+                // be small to none
+                let mut tasks_to_remove = 0;
+                for task in &borrowed_tasklet.queue {
+                    if task.service {
+                        let cl = clients.get_mut(&task.token).unwrap();
+                        if let Client::Browser(g, _, _, _) = cl {
+                            (task.handler)(g, http_response.clone()); 
+                            tasks_to_remove += 1;
+                        }
+                    } 
+                } 
+                while tasks_to_remove > 0 {
+                    borrowed_tasklet.queue.pop();
+                    borrowed_tasklet.serviceable -= 1;
+                    tasks_to_remove -= 1;
+                }
+            }
+        }
         for event in handler.get_events() {
             match event.token() {
                 mio::Token(0) => {
@@ -56,15 +79,18 @@ fn main() {
                     if let Client::Unknown(g) = client {
                         if event.is_readable() {
                             if let Ok(r) = g.read_from_client() {
-                                println!("{:?}", r);
+                                //println!("{:?}", r);
                                 handler.reregister_connection(&mut g.stream, token.into(), Interest::READABLE | Interest::WRITABLE);
                                 // Follow check allows us to load browser page even through we
                                 // consume the readable event
                                 if let Some(s) = r.headers().get("User-Agent") {
                                     if s.ne("python-requests/2.31.0") {
-                                        http_response = client.handle_request(Some(r.clone()));
+                                        http_response = match client.handle_request(Some(r.clone())) {
+                                            Ok(r) => r,
+                                            Err(e) => panic!("Wut")
+                                        }
                                     }
-                                    println!("Response: {http_response:?}");
+                                    //println!("Response: {http_response:?}");
                                 }
                                 let removed_item = clients.remove(&token).unwrap();
                                 match r.headers().get("User-Agent").unwrap().to_str().unwrap() {
@@ -75,7 +101,8 @@ fn main() {
                                     }
                                     _ => {
                                         if let Client::Unknown(g) = removed_item {
-                                            clients.insert(token, Client::Browser(g, Rc::clone(&global_data)));
+                                            clients.insert(token, Client::Browser(g, Rc::clone(&global_data),
+                                            Rc::clone(&tasklet), token));
                                         }
                                     }
                                 };
@@ -88,11 +115,23 @@ fn main() {
                             let mut valid_write = 0;
                             let mut valid_read = 0;
                             if event.is_readable() {
-                                http_response = client.handle_request(None); 
+                                http_response = match client.handle_request(None) {
+                                    Ok(r) => r,
+                                    Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                                        need_to_write = false;
+                                        println!("{e}");
+                                        Response::builder()
+                                        .status(200)
+                                        .header("Content-Length", e.to_string().len())
+                                        .body(e.to_string())
+                                        .unwrap()
+                                    },
+                                    Err(e) => panic!("Don't know how to handle this...")
+                                };
                             }
                             if event.is_writable() && need_to_write {
                                 match client {
-                                    Client::Browser(g, _) => {
+                                    Client::Browser(g, _, _, _) => {
                                         valid_write = g.write_to_client(http_response.clone());
                                         need_to_write = false;
                                     },

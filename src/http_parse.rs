@@ -31,7 +31,7 @@ impl ParseBytes for Response<String> {
 
 impl ParseString<Request<String>> for String {
     fn parse_to_struct(&self) -> Request<String> {
-        println!("{}", self);
+        //println!("{}", self);
         let mut split = self.split("\r\n");
         let mut request = Request::builder();
         if let Some(line) = split.next() {
