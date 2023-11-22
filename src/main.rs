@@ -3,21 +3,22 @@ use std::io::{self, ErrorKind};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use client::{Client, Serviceable, ClientInfo};
+use global::{TaskQueue, GlobalHandle};
 use http::{Response, Request};
 use mio::Interest;
-use poller::{Client, TaskQueue};
-use poller::GenericConn;
-use poller::Serviceable;
 
 mod poller;
 mod http_parse;
+mod global;
+mod client;
 
 fn main() {
     let mut handler = poller::initialize_poll().unwrap();
     let mut clients : HashMap<mio::Token, Client> = HashMap::new();
     let tasklet : Rc<RefCell<TaskQueue>> = Rc::new(RefCell::new(TaskQueue::new()));
     let mut client_id = 1;
-    let global_data : Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
+    let global_data : Rc<RefCell<GlobalHandle>> = Rc::new(RefCell::new(GlobalHandle::new()));
     //let http_response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n\r\nHi from Rust!";
     let mut http_response = Response::builder()
                                 .status(200)
@@ -40,8 +41,8 @@ fn main() {
                 for task in &borrowed_tasklet.queue {
                     if task.service {
                         let cl = clients.get_mut(&task.token).unwrap();
-                        if let Client::Browser(g, _, _, _) = cl {
-                            (task.handler)(g, http_response.clone()); 
+                        if let Client::Browser(ref mut i, _) = cl {
+                            (task.handler)(i, http_response.clone()); 
                             tasks_to_remove += 1;
                         }
                     } 
@@ -58,7 +59,7 @@ fn main() {
                 mio::Token(0) => {
                     loop {
                         let mut connection = match handler.accept_connection() {
-                            Ok((stream, addr)) => Client::Unknown(GenericConn { stream, addr }) ,
+                            Ok((stream, addr)) => Client::Unknown(ClientInfo { stream, token: mio::Token(client_id) }) ,
                             Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                             Err(e) => panic!("{e}")
                         };
@@ -95,14 +96,13 @@ fn main() {
                                 let removed_item = clients.remove(&token).unwrap();
                                 match r.headers().get("User-Agent").unwrap().to_str().unwrap() {
                                     "python-requests/2.31.0" => {
-                                        if let Client::Unknown(g) = removed_item {
-                                            clients.insert(token, Client::Python(g, Rc::clone(&global_data)));
+                                        if let Client::Unknown(i) = removed_item {
+                                            clients.insert(token, Client::Python(i, Rc::clone(&global_data)));
                                         } 
                                     }
                                     _ => {
-                                        if let Client::Unknown(g) = removed_item {
-                                            clients.insert(token, Client::Browser(g, Rc::clone(&global_data),
-                                            Rc::clone(&tasklet), token));
+                                        if let Client::Unknown(i) = removed_item {
+                                            clients.insert(token, Client::Browser(i, Rc::clone(&global_data)));
                                         }
                                     }
                                 };
@@ -131,12 +131,12 @@ fn main() {
                             }
                             if event.is_writable() && need_to_write {
                                 match client {
-                                    Client::Browser(g, _, _, _) => {
-                                        valid_write = g.write_to_client(http_response.clone());
+                                    Client::Browser(i, _) => {
+                                        valid_write = i.write_to_client(http_response.clone());
                                         need_to_write = false;
                                     },
-                                    Client::Python(g, _) => {
-                                        valid_write = g.write_to_client(http_response1.clone());
+                                    Client::Python(i, _) => {
+                                        valid_write = i.write_to_client(http_response1.clone());
                                         need_to_write = false;
                                     },
                                     _ => panic!("Attempting to write to potentially unknown client!")
